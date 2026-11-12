@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Comparativo Presupuestal por Comunas: Cali vs Medellín (2022 - 2026)</title>
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f6f9;
+            color: #333;
+        }
+        h1 {
+            text-align: center;
+            color: #1e293b;
+            margin-bottom: 5px;
+        }
+        p.subtitle {
+            text-align: center;
+            color: #64748b;
+            margin-top: 0;
+            margin-bottom: 25px;
+        }
+        .container {
+            display: flex;
+            gap: 20px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .city-card {
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            width: 48%;
+            min-width: 450px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+        .city-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .city-title {
+            font-size: 1.4rem;
+            font-weight: bold;
+            color: #0f172a;
+            margin: 0;
+        }
+        .total-budget {
+            font-size: 1rem;
+            color: #0284c7;
+            font-weight: bold;
+        }
+        .map-and-controls {
+            display: flex;
+            gap: 15px;
+            flex-grow: 1;
+        }
+        .map-container {
+            flex-grow: 1;
+            height: 450px;
+            border-radius: 8px;
+            border: 1px solid #cbd5e1;
+        }
+        .controls-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            width: 110px;
+        }
+        .year-btn {
+            padding: 10px;
+            background-color: #e2e8f0;
+            border: none;
+            border-radius: 6px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .year-btn:hover {
+            background-color: #cbd5e1;
+        }
+        .year-btn.active {
+            background-color: #0284c7;
+            color: white;
+        }
+        .footer-source {
+            font-size: 0.75rem;
+            color: #94a3b8;
+            text-align: right;
+            margin-top: 10px;
+            font-style: italic;
+        }
+        /* Leyenda de coropletas */
+        .info.legend {
+            background: white;
+            padding: 6px 8px;
+            font: 12px/14px Arial, Helvetica, sans-serif;
+            background: rgba(255,255,255,0.9);
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            line-height: 18px;
+            color: #555;
+        }
+        .info.legend i {
+            width: 18px;
+            height: 18px;
+            float: left;
+            margin-right: 8px;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Distribución Presupuestal Intramunicipal</h1>
+    <p class="subtitle">Comparativo georreferenciado por comunas y localidades (2022 - 2026)</p>
+
+    <div class="container">
+        <!-- Tarjeta Cali -->
+        <div class="city-card">
+            <div class="city-header">
+                <h2 class="city-title">Santiago de Cali</h2>
+                <div class="total-budget" id="total-Cali">Total: $0 COP</div>
+            </div>
+            <div class="map-and-controls">
+                <div id="map-cali" class="map-container"></div>
+                <div class="controls-panel" id="controls-Cali">
+                    <!-- Botones generados dinámicamente -->
+                </div>
+            </div>
+            <div class="footer-source">Fuente: POAI / Alcaldía de Santiago de Cali / Datos Abiertos</div>
+        </div>
+
+        <!-- Tarjeta Medellín -->
+        <div class="city-card">
+            <div class="city-header">
+                <h2 class="city-title">Medellín</h2>
+                <div class="total-budget" id="total-Medellin">Total: $0 COP</div>
+            </div>
+            <div class="map-and-controls">
+                <div id="map-medellin" class="map-container"></div>
+                <div class="controls-panel" id="controls-Medellin">
+                    <!-- Botones generados dinámicamente -->
+                </div>
+            </div>
+            <div class="footer-source">Fuente: Presupuesto Participativo / Alcaldía de Medellín / API Socrata</div>
+        </div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let datosGlobales = {};
+        let anioActual = "2022";
+        let mapCali, mapMedellin;
+        let geoJsonLayerCali, geoJsonLayerMedellin;
+
+        // Escala de colores (5 rangos: de claro a oscuro - Paleta YlOrRd)
+        function getColor(d, breaks) {
+            return d > breaks[4] ? '#800026' :
+                   d > breaks[3] ? '#BD0026' :
+                   d > breaks[2] ? '#E31A1C' :
+                   d > breaks[1] ? '#FC4E2A' :
+                   d > breaks[0] ? '#FD8D3C' : '#FFEDA0';
+        }
+
+        // Calcular los 5 rangos (cuantiles) para los montos de las comunas
+        function calcularRangos(valores) {
+            let sorted = [...valores].sort((a, b) => a - b);
+            let n = sorted.length;
+            return [
+                sorted[Math.floor(n * 0.2)] || 0,
+                sorted[Math.floor(n * 0.4)] || 0,
+                sorted[Math.floor(n * 0.6)] || 0,
+                sorted[Math.floor(n * 0.8)] || 0,
+                sorted[Math.floor(n * 0.95)] || sorted[n-1] || 0
+            ];
+        }
+
+        // Formatear moneda en billones o millones
+        function formatDinero(monto) {
+            if (monto >= 1e12) {
+                return "$" + (monto / 1e12).toFixed(2) + " Billones";
+            } else {
+                return "$" + (monto / 1e9).toFixed(2) + " Mil Millones";
+            }
+        }
+
+        // Inicializar mapas
+        function initMaps() {
+            mapCali = L.map('map-cali').setView([3.4372, -76.5225], 11);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{z}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(mapCali);
+
+            mapMedellin = L.map('map-medellin').setView([6.2442, -75.5812], 11);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{z}.png', {
+                attribution: '&copy; OpenStreetMap'
+            }).addTo(mapMedellin);
+        }
+
+        // Cargar datos JSON y construir interfaz
+        fetch('datos_comunas_cali_medellin.json')
+            .then(response => response.json())
+            .then(data => {
+                datosGlobales = data;
+                initMaps();
+                crearBotones();
+                actualizarVisualizacion(anioActual);
+            });
+
+        function crearBotones() {
+            const anios = ["2022", "2023", "2024", "2025", "2026"];
+            ['Cali', 'Medellin'].forEach(ciudad => {
+                const panel = document.getElementById(`controls-${ciudad}`);
+                panel.innerHTML = '';
+                anios.forEach(ano => {
+                    const btn = document.createElement('button');
+                    btn.className = `year-btn ${ano === anioActual ? 'active' : ''}`;
+                    btn.innerText = ano;
+                    btn.onclick = () => {
+                        // Cambiar clase activa en ambos paneles
+                        document.querySelectorAll('.year-btn').forEach(b => {
+                            if(b.innerText === ano) b.classList.add('active');
+                            else b.classList.remove('active');
+                        });
+                        anioActual = ano;
+                        actualizarVisualizacion(ano);
+                    };
+                    panel.appendChild(btn);
+                });
+            });
+        }
+
+        function actualizarVisualizacion(ano) {
+            // --- CALI ---
+            let dataCaliAno = datosGlobales.Cali.anios[ano];
+            let valoresCali = Object.values(dataCaliAno).map(x => x.monto);
+            let breaksCali = calcularRangos(valoresCali);
+            let totalCali = valoresCali.reduce((a, b) => a + b, 0);
+            document.getElementById('total-Cali').innerText = `Total: ${formatDinero(totalCali)}`;
+
+            if (geoJsonLayerCali) mapCali.removeLayer(geoJsonLayerCali);
+            geoJsonLayerCali = L.geoJson(datosGlobales.Cali.geometria, {
+                style: function(feature) {
+                    let id = String(feature.properties.id_comuna);
+                    let monto = dataCaliAno[id] ? dataCaliAno[id].monto : 0;
+                    return {
+                        fillColor: getColor(monto, breaksCali),
+                        weight: 1,
+                        opacity: 1,
+                        color: 'white',
+                        fillOpacity: 0.75
+                    };
+                },
+                onEachFeature: function(feature, layer) {
+                    let id = String(feature.properties.id_comuna);
+                    let info = dataCaliAno[id] || {nombre: "Comuna", monto: 0};
+                    layer.bindPopup(`<b>Cali - ${info.nombre}</b><br>Año ${ano}<br>Inversión: ${formatDinero(info.monto)}`);
+                }
+            }).addTo(mapCali);
+
+            // --- MEDELLÍN ---
+            let dataMedAno = datosGlobales.Medellin.anios[ano];
+            let valoresMed = Object.values(dataMedAno).map(x => x.monto);
+            let breaksMed = calcularRangos(valoresMed);
+            let totalMed = valoresMed.reduce((a, b) => a + b, 0);
+            document.getElementById('total-Medellin').innerText = `Total: ${formatDinero(totalMed)}`;
+
+            if (geoJsonLayerMedellin) mapMedellin.removeLayer(geoJsonLayerMedellin);
+            geoJsonLayerMedellin = L.geoJson(datosGlobales.Medellin.geometria, {
+                style: function(feature) {
+                    let id = String(feature.properties.id_comuna);
+                    let monto = dataMedAno[id] ? dataMedAno[id].monto : 0;
+                    return {
+                        fillColor: getColor(monto, breaksMed),
+                        weight: 1,
+                        opacity: 1,
+                        color: 'white',
+                        fillOpacity: 0.75
+                    };
+                },
+                onEachFeature: function(feature, layer) {
+                    let id = String(feature.properties.id_comuna);
+                    let info = dataMedAno[id] || {nombre: "Comuna", monto: 0};
+                    layer.bindPopup(`<b>Medellín - ${info.nombre}</b><br>Año ${ano}<br>Inversión: ${formatDinero(info.monto)}`);
+                }
+            }).addTo(mapMedellin);
+        }
+    </script>
+</body>
+</html>
